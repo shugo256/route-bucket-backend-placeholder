@@ -1,0 +1,68 @@
+version: '3.0'
+services:
+  db:
+    image: mysql:8.0.23
+    # caching_sha2_password.soをインストールする方法を見つけ出す
+    command: [
+        --log-output=FILE,
+        --general_log=1,
+        --general_log_file=/var/lib/mysql/general.log,
+        --slow_query_log=1,
+        --slow_query_log_file=/var/lib/mysql/slow.log,
+        --long_query_time=1,
+        --default-authentication-plugin=mysql_native_password
+    ]
+    environment:
+      MYSQL_DATABASE: 'route_bucket_db'
+      MYSQL_ROOT_PASSWORD: 'password'
+      MYSQL_ROOT_HOST: '%'
+      TZ: 'Asia/Tokyo'
+    ports:
+      - "3306:3306"
+
+    # ↓の呪文がないとoperation not permittedになる
+    # https://sunday-morning.app/posts/2020-07-29-docker-mysql8-mbind-operation-not-permitted
+    cap_add:
+      - SYS_NICE
+
+  api:
+    ports:
+      - "8080:8080"
+    build: api
+    environment:
+      DATABASE_URL: db://root:password@db:3306/route_bucket_db
+      RUST_LOG: info
+      OSRM_ROOT: http://osrm:5000
+    command: >
+      bash -c "
+        resources/scripts/wait_for_db.sh &&
+        /app/target/release/route-bucket-backend"
+    depends_on:
+      - db
+      - osrm
+
+  swagger:
+    image: swaggerapi/swagger-ui:v3.45.1
+    ports:
+      - "4000:8080"
+    volumes:
+      - ./swagger/:/swagger/
+    environment:
+      # yamlなのにjsonに指定するのなぜ
+      SWAGGER_JSON: /swagger/root.yml
+
+  osrm:
+    ports:
+      - "5000:5000"
+    build: osrm
+    command: osrm-routed --algorithm mld /data/map.osm.pbf
+
+  db_manager:
+    build:
+      context: db
+      dockerfile: manager/Dockerfile
+    depends_on:
+      - db
+    profiles:
+      - management
+
